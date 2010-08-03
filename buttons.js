@@ -8,8 +8,11 @@ fashiolistaClass.prototype = {
 		//set some variables
 		this.buttonDict = {};
 		this.domain = '{{ domain }}';
+		
 		this.buttonDomain = '{{ button_domain }}';
 		this.cachedButtonDomain = '{{ cached_button_domain }}';
+		this.cacheClearButtonDomain = '{{ cache_clear_button_domain }}';
+		
 		this.countApi = '/love_count/?ajax=1';
 		this.loveApi = '/add_love/?ajax=1';
 		this.popup = this.domain + '/item_add_oe/?popup=1';
@@ -59,11 +62,11 @@ fashiolistaClass.prototype = {
 		return fashiolistaButtons;
 	},
 	
-	makeRequest: function (path, callback, cached) {
+	makeRequest: function (path, callback, buttonDomain) {
 		//translate the request to an absolute url with callback
 		//and create a script element for it
-		var apiUrl = (cached) ? this.cachedButtonDomain : this.buttonDomain;
-		var url = apiUrl + path;
+		buttonDomain = buttonDomain || this.buttonDomain;
+		var url = buttonDomain + path;
 		if (callback) {
 			var seperator = (url.indexOf('?') >= 0) ? '&' : '?';
 			url += seperator + 'callback=' + callback;
@@ -95,7 +98,7 @@ fashiolistaClass.prototype = {
 			scope.buttonLoaded.call(scope, buttonId, data);
 		};
 		window[callbackFunctionName] = callbackFunction;
-		this.makeRequest(this.countApi + path, callbackFunctionName, true);
+		this.makeRequest(this.countApi + path, callbackFunctionName, this.cachedButtonDomain);
 	},
 	
 	buttonLoaded: function (buttonId, loveData) {
@@ -103,6 +106,7 @@ fashiolistaClass.prototype = {
 		//Now that the script tag is loaded, update the button
 		// with the relevant love information
 		//
+		fashiolista.authenticated = loveData.authenticated;
 		var buttonInstance = this.buttonDict[buttonId];
 		buttonInstance.updateFormat(loveData);
 	},
@@ -120,22 +124,17 @@ fashiolistaClass.prototype = {
 		};
 		
 		var path = '&url=' + encodeURIComponent(buttonUrl);
-		this.makeRequest(this.loveApi + path, callbackFunctionName);
+		if (buttonInstance.lovedState) {
+			path += '&remove=1';
+		}
+		
+		this.makeRequest(this.loveApi + path, callbackFunctionName, this.buttonDomain);
+
 	},
 	
 	addLoveResponse: function (buttonId, loveData) {
-		//possible responses
-		//love added
-		//fresh item
-		//login or register
-		if (!loveData.user_id) {
-			this.openPopup(buttonId, loveData);
-		} else if (!loveData.item_id) {
-			this.openPopup(buttonId, loveData);
-		} else {
-			//love :)
-			this.loveAdded(buttonId, loveData);
-		}
+		//hook for the add love response
+		this.loveAdded(buttonId, loveData);
 	},
 	
 	openPopup: function (buttonId, loveData) {
@@ -143,18 +142,29 @@ fashiolistaClass.prototype = {
 		var fullUrl = this.popup + buttonInstance.getPopupQueryString();
 		var callbackFunctionName = 'add_love_response_' + buttonId;
 		fullUrl += '&button_id=' + buttonId;
-		fashiolistaUtils.popscreen(fullUrl);
+		this.popupWindow = window.open(fullUrl, 'fashiolista_button_popup', 'width=550,height=600,resizable=yes,menubar=no,scrollbars=1,status=no,toolbar=no');
+		this.popupWindow.focus();
+		
+		if (!buttonInstance.loveFaked) {
+			var newData = buttonInstance.lastData;
+			var currentLoves = newData.loves || 0;
+			newData.loves = currentLoves + 1;
+			this.loveAdded(buttonId, newData);
+		} else {
+			//check if we are authenticated
+			//buttonInstance.lovedState = false;
+			this.addLove(buttonId);
+		}
+		buttonInstance.loveFaked = true;
 	},
 	
 	loveAdded: function (buttonId, loveData) {
-		var additionalClass = 'fash-loved';
 		var buttonInstance = this.buttonDict[buttonId];
-		var buttonElement = buttonInstance.element;
-		var newHtml = buttonElement.innerHTML.replace(/[0-9]+<\/span>/, loveData.loves);
-		buttonElement.innerHTML = newHtml;
-		if (buttonElement.className.indexOf(additionalClass) == -1) {
-			buttonElement.className += ' ' + additionalClass;
+		fashiolista.authenticated = loveData.authenticated;
+		if (loveData.authenticated && loveData.item_id) {
+			if (this.popupWindow) this.popupWindow.close();
 		}
+		buttonInstance.updateFormat(loveData, true);
 	}
 };
 
@@ -173,23 +183,6 @@ fashiolistaUtilsClass.prototype = {
 	        vars[hash[0]] = decodeURIComponent(hash[1]);
 	    }
 	    return vars;
-	},
-	
-	popscreen: function (url, targetWindow, options) {
-		var defaultOptions = {'width': 500, 'height': 500, 'resizable': 'yes', 'menubar': 'no', 'scrollbars': 1, 'status': 'no', 'toolbar': 'no'};
-		if (typeof(options) != 'undefined') {
-			for (var key in defaultOptions) {
-				if (options[key]) {
-					defaultOptions[key] = options[key];
-				}
-			}
-		}
-		var optionList = [];
-		for (var keyTwo in defaultOptions) {
-			optionList.push(keyTwo + '=' + defaultOptions[keyTwo]);
-		}
-	    var w = window.open(url, targetWindow, optionList.join(', '));
-	    w.focus();
 	},
 	
     ready: function() {
@@ -270,6 +263,7 @@ fashiolistaButtonClass.prototype = {
 		this.buttonId = buttonId;
 		this.url = buttonElement.href;
 		this.lookupUrl = this.getButtonUrl(buttonElement);
+		this.itemId = false;
 		
 		if (this.element.className.indexOf('fashiolista_large') >= 0) {
 			this.type = 'large';
@@ -278,8 +272,9 @@ fashiolistaButtonClass.prototype = {
 		} else {
 			this.type = 'medium';
 		}
-		
+		this.lastData = null;
 		this.baseFormat();
+		this.lovedState = false;
 	},
 	
 	getButtonUrl: function (buttonElement) {
@@ -316,34 +311,27 @@ fashiolistaButtonClass.prototype = {
 		return queryString;
 	},
 	
-	baseFormat: function () {
-		//
-		//Format the button, and connect with the counts
-		//This is convenient when the count information comes in
-		//
-		var format;
-		var formatNode = document.createElement('SPAN');
-		formatNode.className = 'fash-wrapper fash-clear fash-' + this.type;
-		if (this.type == 'large') {
-			format = '<span class="fash-container"> \
-					<span class="fash-body"> \
-						<a href="{{ item_href }}" class="fash-anchor-item"><span class="fash-count">1</span></a> \
-						<a class="fash-anchor" href="{{ href }}">love it</a> \
-					</span> \
-				</span>';
-		} else if (this.type == 'medium') {
-			format = '<span class="fash-container"> \
+	formats: {
+		'large': 
+			'<span class="fash-container"> \
+				<span class="fash-body"> \
+					<a href="{{ item_href }}" class="fash-anchor-item"><span class="fash-count">1</span></a> \
+					<a class="fash-anchor" href="{{ href }}">love it</a> \
+				</span> \
+			</span>',
+		'medium': 
+			'<span class="fash-container"> \
 					<span class="fash-body"> \
 						<span class="fash-count-container"> \
 							<a class="fash-anchor" href="{{ href }}">love it</a> \
 						</span>\
 					</span> \
 					<a href="{{ item_href }}" class="fash-anchor-item"> \
-					1 person loved this item \
+					<span class="fash-count-expl">1 person loved this item</span> \
 					</a> \
-				</span>';
-		} else if (this.type == 'compact') {
-			format = '<span class="fash-container"> \
+			</span>',
+		'compact': 
+			'<span class="fash-container"> \
 					<span class="fash-body"> \
 						<a class="fash-anchor" href="{{ href }}"><span class="fash-count-container"> \
 						<span class="fash-count">1</span> \
@@ -351,12 +339,23 @@ fashiolistaButtonClass.prototype = {
 						</span></a> \
 					</span> \
 					<span class="fash-info"> \
-					<a class="fash-count-explanation" href="{{ href }}">1 person loved this item!</a><br /> \
+					<a class="fash-count-anch" href="{{ href }}"> \
+					<span class="fash-count-expl">1 person loved this item</span></a><br /> \
 					love it too at <a href="{{ item_href }}" class="fash-anchor-item">fashiolista.com</a> \
 					</span> \
-				</span>';
-		}
-		var format = format.replace(/{{ href }}/gim, this.element.href);
+			</span>'
+	},
+	
+	
+	baseFormat: function () {
+		//
+		//Format the button, and connect with the counts
+		//This is convenient when the count information comes in
+		//
+		var formatNode = document.createElement('SPAN');
+		formatNode.className = 'fash-wrapper fash-clear fash-' + this.type;
+		var format = this.formats[this.type];
+		format = format.replace(/{{ href }}/gim, this.element.href);
 		format = format.replace(/{{ item_href }}/gim, 'http://www.fashiolista.com/');
 		formatNode.innerHTML = format;
 		this.element.parentNode.replaceChild(formatNode, this.element);
@@ -365,32 +364,59 @@ fashiolistaButtonClass.prototype = {
 	},
 	
 	initializeButtonClick: function () {
+		//attaches the add love function to all non item links in the button
 		var buttonId = this.buttonId;
 		var links = this.element.getElementsByTagName('A');
+		var popupRequired = !this.itemId || !fashiolista.authenticated;
+		
+		var onclickHandler = function () {
+			fashiolista.addLove.call(fashiolista, buttonId);
+			return false;
+		};
+		if (popupRequired) {
+			onclickHandler = function () {
+				fashiolista.openPopup.call(fashiolista, buttonId);
+				return false;
+			};
+		}
+		
 		for (var j = 0, len = links.length; j < len; j++) {
 			var linkElement = links[j];
 			if (linkElement.className != 'fash-anchor-item') {
-				linkElement.onclick = function () {
-					fashiolista.addLove.call(fashiolista, buttonId);
-					return false;
-				}
+				linkElement.onclick = onclickHandler;
 			}
 		}
 	},
 	
-	updateFormat: function (loveData) {
+	updateFormat: function (loveData, loved) {
 		//
-		//Updates the button's display depending on the ammount of loves
+		//Updates the button's display depending on the amount of loves
 		//
-		var personText = 'Be the first to love this item';
-		if (loveData.loves == 1) {
-			var personText = '1 person loved this item';
-		} else if (loveData.loves > 1) {
-			var personText = loveData.loves + ' people loved this item';
+		this.lastData = loveData;
+		this.itemId = loveData.item_id;
+		if (loveData.remove != undefined) {
+			loved = !loveData.remove;	
+		}
+		if (loveData.loved != undefined) {
+			loved = loveData.loved;
 		}
 		
-		var newHtml = this.element.innerHTML.replace(/1 person loved this item/gim, personText);
-		var countRe = new RegExp('1</span>', 'gim');
+		this.lovedState = loved;
+		
+		var personText = 'Be the first to love this item';
+		if (loveData.loves == 1) {
+			personText = '1 person loves this item';
+		} else if (loveData.loves > 1) {
+			personText = loveData.loves + ' people love this item';
+		}
+		var newHtml = this.element.innerHTML;
+		var countExplanationRegex = new RegExp('fash-count-expl[^>]*>(.*?)</span>', 'gim');
+		var matches = countExplanationRegex.exec(newHtml);
+		if (matches && matches.length > 1) {
+			newHtml = newHtml.replace(matches[1], personText);
+		}
+		
+		var countRe = new RegExp('[0-9]+</span>', 'gim');
 		var linkRe = new RegExp('http://www.fashiolista.com/"', 'gim');
 		var loves = loveData.loves || 0;
 		newHtml = newHtml.replace(countRe, loves + '</span>');
@@ -400,10 +426,25 @@ fashiolistaButtonClass.prototype = {
 		if (loves === 0) {
 			newHtml = newHtml.replace('too at', 'at');
 		}
+		
+		var additionalClass = 'fash-loved';
+		if (loved) {
+			if (this.element.className.indexOf(additionalClass) == -1) {
+				this.element.className += ' ' + additionalClass;
+			}
+			newHtml = newHtml.replace('love it', 'loved');
+		} else {
+			if (this.element.className.indexOf(additionalClass) != -1) {
+				this.element.className = this.element.className.replace(' ' + additionalClass, '');
+			}
+			newHtml = newHtml.replace('loved', 'love it');
+		}
+		
 		this.element.innerHTML = newHtml;
+		
 		this.initializeButtonClick();
 	}
-}
+};
 
 //
 //Simulate an ondomload as well as we can without a framework
