@@ -221,7 +221,7 @@ fashiolistaUtilsClass.prototype = {
         // Mozilla, Opera and webkit nightlies currently support this event
         if ( document.addEventListener ) {
             // Use the handy event callback
-            document.addEventListener( "DOMContentLoaded", DOMContentLoaded, false );
+            document.addEventListener( "DOMContentLoaded", FashiolistaDOMContentLoaded, false );
             
             // A fallback to window.onload, that will always work
             window.addEventListener( "load", fashiolistaUtils.ready, false );
@@ -230,7 +230,7 @@ fashiolistaUtilsClass.prototype = {
         } else if ( document.attachEvent ) {
             // ensure firing before onload,
             // maybe late but safe also for iframes
-            document.attachEvent("onreadystatechange", DOMContentLoaded);
+            document.attachEvent("onreadystatechange", FashiolistaDOMContentLoaded);
             
             // A fallback to window.onload, that will always work
             window.attachEvent( "onload", jQuery.ready );
@@ -453,23 +453,23 @@ fashiolistaButtonClass.prototype = {
 	
 // Cleanup functions for the document ready method
 if ( document.addEventListener ) {
-    DOMContentLoaded = function() {
-        document.removeEventListener( "DOMContentLoaded", DOMContentLoaded, false );
+    FashiolistaDOMContentLoaded = function() {
+        document.removeEventListener( "DOMContentLoaded", FashiolistaDOMContentLoaded, false );
         fashiolistaUtils.ready();
     };
 
 } else if ( document.attachEvent ) {
-    DOMContentLoaded = function() {
+    FashiolistaDOMContentLoaded = function() {
         // Make sure body exists, at least, in case IE gets a little overzealous (ticket #5443).
         if ( document.readyState === "complete" ) {
-            document.detachEvent( "onreadystatechange", DOMContentLoaded );
+            document.detachEvent( "onreadystatechange", FashiolistaDOMContentLoaded );
             fashiolistaUtils.ready();
         }
     };
 }
 
 // The DOM ready check for Internet Explorer
-function doScrollCheck() {
+function FashiolistaDoScrollCheck() {
     if ( fashiolistaUtils.isReady ) {
         return;
     }
@@ -479,7 +479,7 @@ function doScrollCheck() {
         // http://javascript.nwbox.com/IEContentLoaded/
         document.documentElement.doScroll("left");
     } catch( error ) {
-        setTimeout( doScrollCheck, 1 );
+        setTimeout( FashiolistaDoScrollCheck, 1 );
         return;
     }
 
